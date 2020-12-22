@@ -1,0 +1,230 @@
+---
+title: "Multiple Linear Regression Project on Medical Cost Personal Datasets"
+output:
+  html_document:
+    df_print: paged
+---
+## Multiple Linear Regression Project on Medical Cost Personal Datasets - Applied Linear Regression
+Astrid Wang
+
+December 18, 2020
+
+datasource: https://www.kaggle.com/mirichoi0218/insurance or https://gist.github.com/meperezcuello/82a9f1c1c473d6585e750ad2e3c05a41 
+
+The report paper including method discussion and reference is in a separate docs file
+```{r}
+#installed.packages("car")
+#install.packages("olsrr")
+#install.packages("reshape2")
+#install.packages("tidyverse")
+#install.packages("caret")
+#install.packages("MuMIn")
+#library(kenlab)
+library(MuMIn)
+library(reshape2)
+library(ggplot2)
+library("olsrr")
+library(car)
+library(caret)
+df<- read.csv(file = 'insurance2.csv')
+head(df)
+```
+```{r}
+df <- transform(sex=factor(sex),smoker=factor(smoker),region=factor(region),df)
+f1<-lm(charges~age+sex+bmi+children+smoker+region,data=df) # base model, or full model
+summary(f1)
+contrasts(df$sex)
+contrasts(df$smoker)
+contrasts(df$region)
+```
+```{r}
+vif(f1)
+plot(density(df$charges))
+plot(density(log(df$charges)))
+plot(f1)
+```
+```{r}
+table(df$children) # try to understand the dataframe
+plot(df$age,df$children)
+plot(log(df$age),log(df$charges))
+```
+
+## Apply backward elimination for full model
+```{r}
+f2<-ols_step_backward_p(f1,details = TRUE) 
+
+```
+
+```{r}
+
+f2<-lm(charges ~ age  + bmi + children + smoker+region, data = df)
+summary(f2)
+```
+## Transformation Attemptation
+```{r}
+summary(powerTransform(f2)) # try power transformations but failed
+invResPlot(f2)
+```
+
+
+```{r}
+f6<-lm(log(charges) ~ age  + bmi + children + smoker+region, data = df) # use log instead of 1/3 power for the response variable because it makes more quantiles fashion the Normal distribution
+summary(f6)
+plot(f6)
+```
+
+## Add Weight
+
+```{r}
+df2<-suppressWarnings(transform(df, SD=apply(df,1, sd, na.rm = TRUE))) # new column sd
+head(df2)
+f3<-lm(log(charges) ~ age  + bmi + children + smoker+region, weights = 1/SD^2,data = df2)
+summary(f3)
+plot(f3) # increased normality a lot
+```
+
+
+```{r}
+f7<-lm((charges)^(1/3) ~ age  + bmi + children + smoker+region, weights = 1/SD^2,data = df2) # normality issue did not solved by 1/3 power transformation, therefore log transformation is a good chioce. $
+summary(f7)
+plot(f7)
+```
+
+
+```{r}
+pairs(~charges+age+bmi+ children ,data=df,main="Insurance Scatterplot Matrix")
+f4<-lm(log(charges) ~ age  + bmi + children + smoker+region+age:children+bmi:smoker+age:bmi+age:smoker+bmi:children+children:smoker, weights = 1/SD^2,data = df2) # add all possible interaction terms
+summary(f4)
+plot(f4)
+```
+```{r}
+ols_step_backward_p(f4,details = TRUE) # apply backward elimination again
+```
+```{r}
+f5<-lm(log(charges) ~ age  + bmi + children + smoker+region+age:children+bmi:smoker+age:smoker+children:smoker, weights = 1/SD^2,data = df2)
+summary(f5) # final model, the good one
+```
+```{r}
+residualPlot(f5)
+plot(f5)
+```
+## Questions and Findings
+0. descriptive stat
+```{r}
+summary(df)
+```
+
+1. correlation matrix heatmap
+```{r}
+#head(df2)
+df2$sex <- ifelse(df2$sex=="male", 1, 0)
+df2$smoker <- ifelse(df2$smoker=="yes", 1, 0)
+head(df2)
+```
+
+```{r}
+
+df3 <- df2[, c(1,2,3,4,5,7)]
+head(df3)
+cormat <- round(cor(df3),2)
+head(cormat)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()
+```
+```{r}
+get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+}
+get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+}
+upper_tri <- get_upper_tri(cormat)
+upper_tri
+```
+```{r}
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "red", high = "blue", mid = "pink", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Correlation Heatmap") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+
+```
+
+
+
+2. box plot of smokers, regions
+```{r}
+boxplot(charges~smoker,
+data=df,
+main="Charges for Non-Smokers vs Smokers",
+xlab="Smoking Habit",
+ylab="Medical Insurance Cost",
+col="orange",
+border="brown"
+)
+```
+```{r}
+boxplot(charges~region,
+data=df,
+main="Charges for US Regions",
+xlab="US Regions",
+ylab="Medical Insurance Cost",
+col="orange",
+border="brown"
+)
+```
+
+
+3. what is the model?
+is there a positive linear relationship between log(charges) and age? CI? 
+H0: B1=0, H1:B1>0. p-value < 2e-16 which is < 0.05 therefore reject H0, yes. 
+```{r}
+confint(f5,"age",level=0.95)
+```
+with smoking? 
+```{r}
+exp(1.5416300) # a smoker will spend $4.67 more than a non-smoker. 
+```
+
+with children?
+```{r}
+confint(f5,"children",level=0.95) # and yes
+```
+bmi?
+```{r}
+confint(f5,"bmi",level=0.95) #No, not in the final model
+```
+
+
+4. what expenses would you forecast, for a 22-year-old female non-smoker comes from northwest region with 0 children and 17.9 bmi? What is the 95% prediction interval?
+```{r}
+df4 <- data.frame(smoker = "no", children = 0, age = 22,bmi=17.9,region="northwest")
+p1<-predict(f5, df4, interval = 'prediction')
+p1
+exp(p1)
+```
+
+## Model Selection table
+not fitted in the same dataframe because I added a new column for the weight but the predictors did not change. 
+```{r}
+model.sel(f1, f2, f3, f4, f5, f6, f7, rank = AIC)
+```
+
+## ANOVA table for f5 which is the final model
+```{r}
+#parameterEstimates(f5)
+anova(f5)
+summary(f5)
+```
+
+
+
